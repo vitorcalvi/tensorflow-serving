@@ -1,10 +1,22 @@
+# Copyright 2018 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 ARG TF_SERVING_VERSION=latest
-ARG TF_SERVING_BUILD_IMAGE=vcalvi/ubuntu-base-tensorflow:v1.5_x86
+ARG TF_SERVING_BUILD_IMAGE=tensorflow/serving:${TF_SERVING_VERSION}-devel
 
 FROM ${TF_SERVING_BUILD_IMAGE} as build_image
-#FROM ubuntu:18.04
-#FROM vcalvi/ubuntu-base-tensorflow:v1.5_x86
-FROM aperture147/tensorflow-non-avx:bionic-slim
+FROM ubuntu:18.04
 
 ARG TF_SERVING_VERSION_GIT_BRANCH=master
 ARG TF_SERVING_VERSION_GIT_COMMIT=head
@@ -20,11 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # Install TF Serving pkg
-#COPY --from=build_image /usr/local/bin/tensorflow_model_server /usr/bin/tensorflow_model_server
-RUN echo "deb [arch=amd64] http://storage.googleapis.com/tensorflow-serving-apt stable tensorflow-model-server tensorflow-model-server-universal" | tee /etc/apt/sources.list.d/tensorflow-serving.list && \
-RUN curl https://storage.googleapis.com/tensorflow-serving-apt/tensorflow-serving.release.pub.gpg | apt-key add -
-RUN apt-get update && apt-get install tensorflow-model-server -y
-
+COPY --from=build_image /usr/local/bin/tensorflow_model_server /usr/bin/tensorflow_model_server
 
 # Expose ports
 # gRPC
@@ -40,18 +48,35 @@ RUN mkdir -p ${MODEL_BASE_PATH}
 # The only required piece is the model name in order to differentiate endpoints
 ENV MODEL_NAME=model
 
-RUN echo "deb http://storage.googleapis.com/tensorflow-serving-apt stable tensorflow-model-server tensorflow-model-server-universal" |  tee /etc/apt/sources.list.d/tensorflow-serving.list && \
-curl https://storage.googleapis.com/tensorflow-serving-apt/tensorflow-serving.release.pub.gpg | apt-key add -
-RUN apt update 
-
-RUN  apt-get install tensorflow-model-server -y
-
 # Create a script that runs the model server so we can use environment variables
 # while also passing in arguments from the docker command line
+#RUN echo '#!/bin/bash \n\n\
+#tensorflow_model_server --port=8500 --rest_api_port=8501 \
+#--model_name=${MODEL_NAME} --model_base_path=${MODEL_BASE_PATH}/${MODEL_NAME} \
+#"$@"' > /usr/bin/tf_serving_entrypoint.sh \
+#&& chmod +x /usr/bin/tf_serving_entrypoint.sh
+
+RUN apt update && apt install  openssh-server sudo -y
+
+RUN useradd -rm -d /home/ubuntu -s /bin/bash -g root -G sudo -u 1000 test 
+
+RUN  echo 'test:test' | chpasswd
+
+RUN service ssh start
+
+EXPOSE 22
+
+#CMD ["/usr/sbin/sshd","-D","/usr/bin/tf_serving_entrypoint.sh"]
+
+#RUN echo '/usr/sbin/sshd -D' > /usr/bin/tf_serving_entrypoint.sh
 RUN echo '#!/bin/bash \n\n\
+nohup /usr/sbin/sshd -D & \
 tensorflow_model_server --port=8500 --rest_api_port=8501 \
 --model_name=${MODEL_NAME} --model_base_path=${MODEL_BASE_PATH}/${MODEL_NAME} \
-"$@"' > /usr/bin/tf_serving_entrypoint.sh \
+"$@"' >> /usr/bin/tf_serving_entrypoint.sh \
 && chmod +x /usr/bin/tf_serving_entrypoint.sh
 
-#ENTRYPOINT ["/usr/bin/tf_serving_entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tf_serving_entrypoint.sh"]
+
+
+#CMD ["/usr/sbin/sshd","-D"]
